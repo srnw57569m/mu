@@ -11,6 +11,17 @@ import re
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
+from config import (
+    ConfigError,
+    load_config,
+    get_commands,
+    get_messages,
+    get_radio_settings,
+    get_branding,
+    build_alias_map,
+) 
+
+
 # Third-party imports
 import yt_dlp
 import yt_dlp as youtube_dl
@@ -38,6 +49,17 @@ PLAYLIST_FILE = "PLAYLIST_FILE.json"
 class MyBot(BaseBot):
     def __init__(self):
         super().__init__()
+
+        self._config = None
+        self._commands_cfg = {}
+        self._alias_map = {}
+        self._messages = {}
+        self._branding = {}
+        self._radio = {}
+
+        self._load_config_runtime()
+
+
 
         self.dance = None
         self.current_song = None
@@ -70,8 +92,78 @@ class MyBot(BaseBot):
         self.user_data = {}
         self.file_path = "user_data.json"  # File path for user data
         self.load_user_data()
-        
+
+        # keep config in sync with runtime state
+
+    def _load_config_runtime(self) -> None:
+        cfg = load_config()
+        self._config = cfg
+        self._radio = get_radio_settings(cfg)
+        self._commands_cfg = get_commands(cfg)
+        self._alias_map = build_alias_map(self._commands_cfg)
+        self._messages = get_messages(cfg)
+        self._branding = get_branding(cfg)
+
+    def _msg(self, key: str, **kwargs: Any) -> str:
+        template = self._messages.get(key, "")
+        if not template:
+            return ""
+        return template.format(**kwargs)
+
+    def _brand_footer(self) -> str:
+        if not self._branding:
+            return ""
+        enabled = bool(self._branding.get("enabled", False))
+        if not enabled:
+            return ""
+        footer = self._branding.get("footer", "")
+        footer = str(footer).strip()
+        if not footer:
+            return ""
+        return footer
+
+    async def _chat(self, text: str) -> None:
+        footer = self._brand_footer()
+        if footer:
+            text = f"{text}\n\n{footer}"
+        await self.highrise.chat(text)
+
+    async def _send_whisper(self, user_id: str, text: str) -> None:
+        footer = self._brand_footer()
+        if footer:
+            text = f"{text}\n\n{footer}"
+        await self.highrise.send_whisper(user_id, text)
+
+    def _parse_command(self, message: str) -> tuple[str, str] | tuple[None, None]:
+        prefix = (self._config or {}).get("bot", {}).get("command_prefix", "/")
+        if not prefix:
+            prefix = "/"
+        # Only parse when it starts with prefix
+        msg = message.strip()
+        if not msg.startswith(prefix):
+            return None, None
+        after = msg[len(prefix):].strip()
+        tokens = after.split()
+        if not tokens:
+            return None, None
+        # multi-word candidate: first token or first two tokens
+        first = tokens[0].lower()
+        rest = after[len(tokens[0]):].lstrip() if len(after) > len(tokens[0]) else ""
+        # try longest 2-token alias
+        if len(tokens) >= 2:
+            two = f"{tokens[0].lower()} {tokens[1].lower()}"
+            if two in self._alias_map:
+                canonical = self._alias_map[two]
+                # rest after two tokens
+                after_two = after[len(tokens[0]) + 1 + len(tokens[1]):].lstrip()
+                return canonical, after_two
+        if first in self._alias_map:
+            canonical = self._alias_map[first]
+            return canonical, rest
+        return None, None
+
     def load_user_data(self):
+
         """Load user data from file."""
         if os.path.exists(self.file_path):
             try:
@@ -121,7 +213,7 @@ class MyBot(BaseBot):
             )
 
     async def on_start(self, session_metadata):
-        print("Xenbot is Armed and Ready.")
+        print("nex is Armed and Ready.")
         self.is_loading = True
 
         if self.logging_enabled:
@@ -537,23 +629,23 @@ class MyBot(BaseBot):
             
             song_request = message[len('/p '):].strip()
 
-            await self.highrise.chat(f"\n🔎 Searching @{user.username}.")
+            await self.highrise.send_whisper(user_id,f"\n🔎 Searching @{user.username} \nPowered by Beatly.")
 
             # Fetch video details using yt_dlp search
             title, duration, file_path, info = await self.search_youtube(song_request, user)
 
             if not info:
-                await self.highrise.chat(f"\n[@{user.username}], I couldn't retrieve details for your song request. Please try a different keyword(s) or URL.")
+                await self.highrise.send_whisper(user_id,f"\n[@{user.username}], I couldn't retrieve details for your song request. Please try a different keyword(s) or URL.")
                 return
 
             # Validate title, duration, and file path
             if not title or duration is None or file_path is None:
-                await self.highrise.chat(f"\n[@{user.username}], I couldn't retrieve details for your song request. Please try a different keyword(s) or URL.")
+                await self.highrise.send_whisper(user_id,f"\n[@{user.username}], I couldn't retrieve details for your song request. Please try a different keyword(s) or URL.")
                 return
 
             # Check if the song passed the duration limit
             if duration > 12 * 60:  # 12 minutes limit
-                await self.highrise.chat(f"\n[@{user.username}], your song: '{title}' exceeds the 12-minute duration limit and cannot be added.")
+                await self.highrise.send_whisper(user_id,f"\n[@{user.username}], your song: '{title}' exceeds the 12-minute duration limit and cannot be added.")
                 return
 
             print("search_youtube function done.")
@@ -563,7 +655,7 @@ class MyBot(BaseBot):
                 user_credits = self.credits.get(user.username, 0)  # Default to 0 if the user is not found
                 
                 if user_credits <= 0:
-                    await self.highrise.chat(f"\n[@{user.username}], you need at least 1 credit to queue a song.")
+                    await self.highrise.send_whisper(user_id,f"\n[@{user.username}], you need at least 1 credit to queue a song.")
                     return
                 
             await self.add_to_queue(user.username, title, duration, file_path,self.ctoggle)
@@ -579,31 +671,31 @@ class MyBot(BaseBot):
                 if playlist_name:  # Ensure the playlist name is not empty
                     await self.play_playlist(playlist_name, user)
                 else:
-                    await self.highrise.chat("Please provide a valid playlist name inside the brackets. Use '/play [playlist_name]'.")
+                    await self.highrise.send_whisper(user_id,"Please provide a valid playlist name inside the brackets. Use '/play [playlist_name]'.")
                 return
 
             if self.is_loading:
-                await self.highrise.chat("The bot is still initializing. Please wait a moment before using the /play command.")
+                await self.highrise.send_whisper(user_id,"The bot is still initializing. Please wait a moment before using the /play command.")
             
             song_request = message[len('/play '):].strip()
 
-            await self.highrise.chat(f"\n🔎 Searching @{user.username}.")
+            await self.highrise.send_whisper(user_id,f"\n🔎 Searching @{user.username} \nPowered by Beatly.")
 
             # Fetch video details using yt_dlp search
             title, duration, file_path, info = await self.search_youtube(song_request, user)
 
             if not info:
-                await self.highrise.chat(f"\n[@{user.username}], I couldn't retrieve details for your song request. Please try a different keyword(s) or URL.")
+                await self.highrise.send_whisper(user_id,f"\n[@{user.username}], I couldn't retrieve details for your song request. Please try a different keyword(s) or URL.")
                 return
 
             # Validate title, duration, and file path
             if not title or duration is None or file_path is None:
-                await self.highrise.chat(f"\n[@{user.username}], I couldn't retrieve details for your song request. Please try a different keyword(s) or URL.")
+                await self.highrise.send_whisper(user_id,f"\n[@{user.username}], I couldn't retrieve details for your song request. Please try a different keyword(s) or URL.")
                 return
 
             # Check if the song passed the duration limit
             if duration > 12 * 60:  # 12 minutes limit
-                await self.highrise.chat(f"\n[@{user.username}], your song: '{title}' exceeds the 12-minute duration limit and cannot be added.")
+                await self.highrise.send_whisper(user_id,f"\n[@{user.username}], your song: '{title}' exceeds the 12-minute duration limit and cannot be added.")
                 return
 
             print("search_youtube function done.")
@@ -613,7 +705,7 @@ class MyBot(BaseBot):
                 user_credits = self.credits.get(user.username, 0)  # Default to 0 if the user is not found
                 
                 if user_credits <= 0:
-                    await self.highrise.chat(f"\n[@{user.username}], you need at least 1 credit to queue a song.")
+                    await self.highrise.send_whisper(user_id,f"\n[@{user.username}], you need at least 1 credit to queue a song.")
                     return
                 
             await self.add_to_queue(user.username, title, duration, file_path,self.ctoggle)
@@ -1268,7 +1360,7 @@ Admin(s) only:
                 song_file_path = await self.download_youtube_audio(song_title)
 
                 await self.highrise.chat(
-                    f"Next Song: '{song_title}' ({formatted_duration})\n\nRequested by  @{song_owner}"
+                    f"Next Song: '{song_title}' ({formatted_duration})\n\nRequested by  @{song_owner}\n\nPowered by Beatly."
                 )
 
                 print(f"Playing: {song_title}")
@@ -1303,19 +1395,23 @@ Admin(s) only:
             self.currently_playing_title = None
 
     async def stream_to_radioking(self, song_file_path):
-        icecast_server = "link.zeno.fm"
-        icecast_port = 80
-        mount_point = "/eooijzk6gmhvv"
-        username = "source"
-        password = "pCgmSVyR"
+        radio = self._radio or get_radio_settings(self._config or load_config())
+        icecast_server = radio.get("icecast_server")
+        icecast_port = radio.get("icecast_port")
+        mount_point = radio.get("mount_point")
+        username = radio.get("username")
+        password = radio.get("password")
+
         icecast_url = f"icecast://{username}:{password}@{icecast_server}:{icecast_port}{mount_point}"
 
         with ThreadPoolExecutor() as executor:
+
             # Use the `_run_ffmpeg` helper inside the executor
             future = executor.submit(self._run_ffmpeg, song_file_path, icecast_url)
             await asyncio.get_event_loop().run_in_executor(None, future.result)
 
     def _run_ffmpeg(self, song_file_path, icecast_url):
+
 
         # Analyze the volume first
         mean_volume = self.analyze_volume(song_file_path)

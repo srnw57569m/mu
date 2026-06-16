@@ -1,7 +1,7 @@
 [YT-DLP]
 
-[Release version] [PyPI] [Donate] [Discord] [Supported Sites] [License:
-Unlicense] [CI Status] [Commits] [Last Commit]
+[Release version] [Python Version] [PyPI] [[Discord]](# [License:
+Unlicense] [Commits]
 
 yt-dlp is a feature-rich command-line audio/video downloader with
 support for thousands of sites. The project is a fork of youtube-dl
@@ -193,18 +193,23 @@ documentation
 There are currently three release channels for binaries: stable, nightly
 and master.
 
--   stable is the default channel, and many of its changes have been
-    tested by users of the nightly and master channels.
--   The nightly channel has releases scheduled to build every day around
-    midnight UTC, for a snapshot of the project's new patches and
-    changes. This is the recommended channel for regular users of
-    yt-dlp. The nightly releases are available from
-    yt-dlp/yt-dlp-nightly-builds or as development releases of the
-    yt-dlp PyPI package (which can be installed with pip's --pre flag).
--   The master channel features releases that are built after each push
-    to the master branch, and these will have the very latest fixes and
-    additions, but may also be more prone to regressions. They are
-    available from yt-dlp/yt-dlp-master-builds.
+-   stable is the default channel, which offers releases published on a
+    (mostly) monthly schedule. While it is named stable due to many of
+    its changes having been tested by users of the nightly or master
+    release channels, the latest stable release is often "stale" and
+    prone to external breakage (i.e. sites changing things on their end
+    and breaking yt-dlp).
+-   The nightly channel offers releases that publish shortly before
+    midnight UTC on any day that sees changes to the codebase. This
+    channel serves as a snapshot of the project's development, and it is
+    the recommended channel for regular users of yt-dlp. The nightly
+    releases are available from yt-dlp/yt-dlp-nightly-builds or as
+    development releases of the yt-dlp PyPI package (which can be
+    installed with pip's --pre flag).
+-   The master channel offers "canary" releases that publish after each
+    push to the master branch. This channel will always provide the very
+    latest fixes and features, but may be prone to bugs or regressions.
+    The master releases are available from yt-dlp/yt-dlp-master-builds.
 
 When using --update/-U, a release binary will only update to its current
 channel. --update-to CHANNEL can be used to switch to a different
@@ -256,11 +261,11 @@ Strongly recommended
     files, as well as for various post-processing tasks. License depends
     on the build
 
-    There are bugs in ffmpeg that cause various issues when used
-    alongside yt-dlp. Since ffmpeg is such an important dependency, we
-    provide custom builds with patches for some of these issues at
-    yt-dlp/FFmpeg-Builds. See the readme for details on the specific
-    issues solved by these builds
+    Since ffmpeg is such an important dependency, we provide our own
+    builds at yt-dlp/FFmpeg-Builds. In the past, patches were applied to
+    these builds in order to fix common issues for yt-dlp users, but
+    currently our builds are equivalent to upstream ffmpeg. See the
+    readme for details
 
     Important: What you need is ffmpeg binary, NOT the Python package of
     the same name
@@ -293,8 +298,7 @@ may be required for some sites that employ TLS fingerprinting.
     -   Can be installed with the curl-cffi extra, e.g.
         pip install "yt-dlp[default,curl-cffi]"
     -   Currently included in most builds except yt-dlp (Unix zipimport
-        binary), yt-dlp_x86 (Windows 32-bit) and
-        yt-dlp_musllinux_aarch64
+        binary) and yt-dlp_x86 (Windows 32-bit)
 
 Metadata
 
@@ -344,7 +348,7 @@ will be built for the same CPU architecture as the Python used.
 
 You can run the following commands:
 
-    python devscripts/install_deps.py --include-extra pyinstaller
+    python devscripts/install_deps.py --include-group pyinstaller
     python devscripts/make_lazy_extractors.py
     python -m bundle.pyinstaller
 
@@ -501,7 +505,7 @@ General Options:
                                     (default)
     --live-from-start               Download livestreams from the start.
                                     Currently experimental and only supported
-                                    for YouTube and Twitch
+                                    for YouTube, Twitch, and TVer
     --no-live-from-start            Download livestreams from the current time
                                     (default)
     --wait-for-video MIN[-MAX]      Wait for scheduled streams to become
@@ -595,7 +599,7 @@ Video Selection:
     --max-filesize SIZE             Abort download if filesize is larger than
                                     SIZE, e.g. 50k or 44.6M
     --date DATE                     Download only videos uploaded on this date.
-                                    The date can be "YYYYMMDD" or in the format 
+                                    The date can be "YYYYMMDD" or in the format
                                     [now|today|yesterday][-N[day|week|month|year]].
                                     E.g. "--date today-2weeks" downloads only
                                     videos uploaded on the same day two weeks ago
@@ -938,8 +942,7 @@ Workarounds:
                                     renegotiation
     --no-check-certificates         Suppress HTTPS certificate validation
     --prefer-insecure               Use an unencrypted connection to retrieve
-                                    information about the video (Currently
-                                    supported only for YouTube)
+                                    information about the video
     --add-headers FIELD:VALUE       Specify a custom HTTP header and its value,
                                     separated by a colon ":". You can use this
                                     option multiple times
@@ -1161,10 +1164,14 @@ Post-Processing Options:
                                     that of --use-postprocessor (default:
                                     after_move). The same syntax as the output
                                     template can be used to pass any field as
-                                    arguments to the command. If no fields are
-                                    passed, %(filepath,_filename|)q is appended
-                                    to the end of the command. This option can
-                                    be used multiple times
+                                    arguments to the command; however, for
+                                    security reasons the only allowed
+                                    conversions are: "i"/"d" (signed integer
+                                    decimal), "f" (floating-point decimal) and
+                                    "q" (shell-quoted). If no fields are passed,
+                                    %(filepath,_filename|)q is appended to the
+                                    end of the command. This option can be used
+                                    multiple times
     --no-exec                       Remove any previously defined --exec
     --convert-subs FORMAT           Convert the subtitles to another format
                                     (currently supported: ass, lrc, srt, vtt).
@@ -2313,11 +2320,11 @@ youtube
 -   player_client: Clients to extract video data from. The currently
     available clients are web, web_safari, web_embedded, web_music,
     web_creator, mweb, ios, android, android_vr, tv, tv_downgraded, and
-    tv_simply. By default, android_vr,web,web_safari is used. If no
+    tv_simply. By default, android_vr,web_safari is used. If no
     JavaScript runtime/engine is available, then only android_vr is
     used. If logged-in cookies are passed to yt-dlp, then
-    tv_downgraded,web,web_safari is used for free accounts and
-    tv_downgraded,web_creator,web is used for premium accounts. The
+    tv_downgraded,web_safari is used for free accounts and
+    tv_downgraded,web_creator is used for premium accounts. The
     web_music client is added for music.youtube.com URLs when logged-in
     cookies are used. The web_embedded client is added for
     age-restricted videos but only successfully works around the
@@ -2330,7 +2337,7 @@ youtube
     authentication. Not all clients support authentication via cookies.
     You can use default for the default clients, or you can use all for
     all clients (not recommended). You can prefix a client with - to
-    exclude it, e.g. youtube:player_client=default,-web
+    exclude it, e.g. youtube:player_client=default,-web_safari
 -   player_skip: Skip some network requests that are generally needed
     for robust extraction. One or more of configs (skip client configs),
     webpage (skip initial webpage), js (skip js player), initial_data
@@ -2340,18 +2347,23 @@ youtube
     #860 and #12826 for more details
 -   webpage_skip: Skip extraction of embedded webpage data. One or both
     of player_response, initial_data. These options are for testing
-    purposes and don't skip any network requests
+    purposes and don't skip any network requests. Neither is skipped by
+    default; however, if a player_js_version value other than actual is
+    used, then webpage_skip=player_response is implied
+-   webpage_client: Client to use for the video webpage request. One of
+    web or web_safari (default)
 -   player_params: YouTube player parameters to use for player requests.
     Will overwrite any default ones set by yt-dlp.
 -   player_js_variant: The player javascript variant to use for n/sig
-    deciphering. The known variants are: main, tcc, tce, es5, es6, tv,
-    tv_es6, phone. The default is tv, and the others are for debugging
-    purposes. You can use actual to go with what is prescribed by the
-    site
+    deciphering. The known variants are: main, tcc, tce, es5, es6,
+    es6_tcc, es6_tce, tv, tv_es6, phone, house. The default is main, and
+    the others are for debugging purposes. You can use actual to go with
+    what is prescribed by the site
 -   player_js_version: The player javascript version to use for n/sig
     deciphering, in the format of signature_timestamp@hash (e.g.
     20348@0004de42). The default is to use what is prescribed by the
-    site, and can be selected with actual
+    site, and can be selected with actual. Using any other value will
+    imply webpage_skip=player_response
 -   comment_sort: top or new (default) - choose comment sorting mode (on
     YouTube's side)
 -   max_comments: Limit the amount of comments to gather.
@@ -2368,8 +2380,9 @@ youtube
 -   formats: Change the types of formats to return. dashy (convert HTTP
     to DASH), duplicate (identical content but different URLs or
     protocol; includes dashy), incomplete (cannot be downloaded
-    completely - live dash and post-live m3u8), missing_pot (include
-    formats that require a PO Token but are missing one)
+    completely - live dash, live adaptive https, and post-live m3u8),
+    missing_pot (include formats that require a PO Token but are missing
+    one)
 -   innertube_host: Innertube API host to use for all API requests; e.g.
     studio.youtube.com, youtubei.googleapis.com. Note that cookies
     exported from one subdomain will not work on others
@@ -2402,8 +2415,8 @@ youtube
 -   use_ad_playback_context: Skip preroll ads to eliminate the mandatory
     wait period before download. Do NOT use this when passing premium
     account cookies to yt-dlp, as it will result in a loss of premium
-    formats. Only effective with the web, web_safari, web_music and mweb
-    player clients. Either true or false (default)
+    formats. Only effective with the mweb and web_music player clients.
+    Either true or false (default)
 
 youtube-ejs
 
@@ -2923,9 +2936,8 @@ New features
 
     -   Supports Clips, Stories (ytstories:<channel UCID>), Search
         (including filters)*, YouTube Music Search, Channel-specific
-        search, Search prefixes (ytsearch:, ytsearchdate:)*, Mixes, and
-        Feeds (:ytfav, :ytwatchlater, :ytsubs, :ythistory, :ytrec,
-        :ytnotif)
+        search, Search prefix (ytsearch:)*, Mixes, and Feeds (:ytfav,
+        :ytwatchlater, :ytsubs, :ythistory, :ytrec, :ytnotif)
     -   Fix for n-sig based throttling *
     -   Download livestreams from the start using --live-from-start
         (experimental)
@@ -2945,9 +2957,6 @@ New features
 -   Multi-threaded fragment downloads: Download multiple fragments of
     m3u8/mpd videos in parallel. Use --concurrent-fragments (-N) option
     to set the number of threads used
-
--   Aria2c with HLS/DASH: You can use aria2c as the external downloader
-    for DASH(mpd) and HLS(m3u8) formats
 
 -   New and fixed extractors: Many new extractors have been added and a
     lot of existing ones have been fixed. See the changelog or the list
@@ -3085,16 +3094,15 @@ and youtube-dlc:
     different/smarter than in youtube-dl. You can use
     --compat-options filename-sanitization to revert to youtube-dl's
     behavior
--   ~~yt-dlp tries to parse the external downloader outputs into the
-    standard progress output if possible (Currently implemented:
-    aria2c). You can use
-    --compat-options no-external-downloader-progress to get the
-    downloader output as-is~~
--   yt-dlp versions between 2021.09.01 and 2023.01.02 applies
+-   (Not currently implemented) ~~yt-dlp tries to parse the external
+    downloader outputs into the standard progress output if possible.
+    You can use --compat-options no-external-downloader-progress to get
+    the downloader output as-is~~
+-   yt-dlp versions from 2021.09.01 to 2022.11.11 (inclusive) applied
     --match-filters to nested playlists. This was an unintentional
     side-effect of 8f18ac and is fixed in d7b460. Use
     --compat-options playlist-match-filter to revert this
--   yt-dlp versions between 2021.11.10 and 2023.06.21 estimated
+-   yt-dlp versions from 2021.11.10 to 2023.06.21 (inclusive) estimated
     filesize_approx values for fragmented/manifest formats. This was
     added for convenience in f2fe69, but was reverted in 0dff8e due to
     the potentially extreme inaccuracy of the estimated values. Use
@@ -3114,9 +3122,9 @@ For convenience, there are some compat option aliases available to use:
 
 -   --compat-options all: Use all compat options (Do NOT use this!)
 -   --compat-options youtube-dl: Same as
-    --compat-options all,-multistreams,-playlist-match-filter,-manifest-filesize-approx,-allow-unsafe-ext,-prefer-vp9-sort
+    --compat-options all,-multistreams,-playlist-match-filter,-manifest-filesize-approx,-allow-unsafe-ext,-prefer-vp9-sort,-allow-unsafe-exec-expansion
 -   --compat-options youtube-dlc: Same as
-    --compat-options all,-no-live-chat,-no-youtube-channel-redirect,-playlist-match-filter,-manifest-filesize-approx,-allow-unsafe-ext,-prefer-vp9-sort
+    --compat-options all,-no-live-chat,-no-youtube-channel-redirect,-playlist-match-filter,-manifest-filesize-approx,-allow-unsafe-ext,-prefer-vp9-sort,-allow-unsafe-exec-expansion
 -   --compat-options 2021: Same as
     --compat-options 2022,no-certifi,filename-sanitization
 -   --compat-options 2022: Same as
@@ -3141,6 +3149,18 @@ security patches:
 
       This option can enable remote code execution! Consider opening an
       issue instead!
+
+-   --compat-options allow-unsafe-exec-expansion: The --exec option
+    allows output template syntax to be used in its commands; however,
+    for security reasons the conversions that can be used are restricted
+    to i/d (signed integer decimal), f (floating-point decimal) and q
+    (shell-quoted). yt-dlp versions from 2021.04.11 to 2026.03.17
+    (inclusive) did not apply this restriction. This option reverts this
+    restriction
+
+      :warning: This option can enable remote code execution! Consider
+      using %()q conversions in your exec command templates for any
+      string values.
 
 Deprecated options
 

@@ -23,7 +23,7 @@ complete --command yt-dlp --long-option remote-components --description 'Remote 
 complete --command yt-dlp --long-option no-remote-components --description 'Disallow fetching of all remote components, including any previously allowed by --remote-components or defaults.'
 complete --command yt-dlp --long-option flat-playlist --description 'Do not extract a playlist'"'"'s URL result entries; some entry metadata may be missing and downloading may be bypassed'
 complete --command yt-dlp --long-option no-flat-playlist --description 'Fully extract the videos of a playlist (default)'
-complete --command yt-dlp --long-option live-from-start --description 'Download livestreams from the start. Currently experimental and only supported for YouTube and Twitch'
+complete --command yt-dlp --long-option live-from-start --description 'Download livestreams from the start. Currently experimental and only supported for YouTube, Twitch, and TVer'
 complete --command yt-dlp --long-option no-live-from-start --description 'Download livestreams from the current time (default)'
 complete --command yt-dlp --long-option wait-for-video --description 'Wait for scheduled streams to become available. Pass the minimum number of seconds (or range) to wait between retries'
 complete --command yt-dlp --long-option no-wait-for-video --description 'Do not wait for scheduled streams (default)'
@@ -188,7 +188,7 @@ complete --command yt-dlp --long-option print-traffic --description 'Display sen
 complete --command yt-dlp --long-option encoding --description 'Force the specified encoding (experimental)'
 complete --command yt-dlp --long-option legacy-server-connect --description 'Explicitly allow HTTPS connection to servers that do not support RFC 5746 secure renegotiation'
 complete --command yt-dlp --long-option no-check-certificates --description 'Suppress HTTPS certificate validation'
-complete --command yt-dlp --long-option prefer-insecure --description 'Use an unencrypted connection to retrieve information about the video (Currently supported only for YouTube)'
+complete --command yt-dlp --long-option prefer-insecure --description 'Use an unencrypted connection to retrieve information about the video'
 complete --command yt-dlp --long-option user-agent
 complete --command yt-dlp --long-option referer
 complete --command yt-dlp --long-option add-headers --description 'Specify a custom HTTP header and its value, separated by a colon ":". You can use this option multiple times'
@@ -267,7 +267,7 @@ complete --command yt-dlp --long-option xattrs --description 'Write metadata to 
 complete --command yt-dlp --long-option concat-playlist --description 'Concatenate videos in a playlist. One of "never", "always", or "multi_video" (default; only when the videos form a single show). All the video files must have the same codecs and number of streams to be concatenable. The "pl_video:" prefix can be used with "--paths" and "--output" to set the output filename for the concatenated files. See "OUTPUT TEMPLATE" for details'
 complete --command yt-dlp --long-option fixup --description 'Automatically correct known faults of the file. One of never (do nothing), warn (only emit a warning), detect_or_warn (the default; fix the file if we can, warn otherwise), force (try fixing even if the file already exists)'
 complete --command yt-dlp --long-option ffmpeg-location --description 'Location of the ffmpeg binary; either the path to the binary or its containing directory'
-complete --command yt-dlp --long-option exec --description 'Execute a command, optionally prefixed with when to execute it, separated by a ":". Supported values of "WHEN" are the same as that of --use-postprocessor (default: after_move). The same syntax as the output template can be used to pass any field as arguments to the command. If no fields are passed, %(filepath,_filename|)q is appended to the end of the command. This option can be used multiple times'
+complete --command yt-dlp --long-option exec --description 'Execute a command, optionally prefixed with when to execute it, separated by a ":". Supported values of "WHEN" are the same as that of --use-postprocessor (default: after_move). The same syntax as the output template can be used to pass any field as arguments to the command; however, for security reasons the only allowed conversions are: "i"/"d" (signed integer decimal), "f" (floating-point decimal) and "q" (shell-quoted). If no fields are passed, %(filepath,_filename|)q is appended to the end of the command. This option can be used multiple times'
 complete --command yt-dlp --long-option no-exec --description 'Remove any previously defined --exec'
 complete --command yt-dlp --long-option exec-before-download
 complete --command yt-dlp --long-option no-exec-before-download

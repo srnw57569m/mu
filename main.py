@@ -7,8 +7,9 @@ import psutil
 # BOT SETTINGS #
 bot_file_name = "musicbot"
 bot_class_name = "MyBot"
-room_id = "696304510df902a35e522aa7"
-bot_token = "6e7028c15394ab30991973799bb04f6e4b94227811e929b0cf27365ffb738bf6"
+
+from config import load_config, get_bot_token, get_room_id, ConfigError
+
 
 def terminate_ffmpeg_processes():
     for proc in psutil.process_iter(['pid', 'name']):
@@ -19,7 +20,15 @@ def terminate_ffmpeg_processes():
             except Exception as e:
                 print(f"Failed to terminate process {proc.info['pid']}: {e}")
 
+_cfg = load_config()
+try:
+    room_id = get_room_id(_cfg)
+    bot_token = get_bot_token(_cfg)
+except ConfigError as e:
+    raise SystemExit(f"Failed to load required config values: {e}")
+
 my_bot = BotDefinition(getattr(import_module(bot_file_name), bot_class_name)(), room_id, bot_token)
+
 
 while True:
     try:
