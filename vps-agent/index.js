@@ -21,7 +21,9 @@ const PORT = Number(process.env.PORT || 8787);
 const SECRET = process.env.AGENT_SECRET;
 const REPO_URL = process.env.BOT_REPO_URL || "";
 const BOTS_DIR = process.env.BOTS_DIR || "/opt/sonicforge-agent/bots";
+// Kept for backwards compatibility; agent will NOT use it to run bot code.
 const PYTHON = process.env.PYTHON || "python3";
+const PYTHON_311 = process.env.PYTHON_311 || "python3.11";
 
 if (!SECRET) {
   console.error("FATAL: AGENT_SECRET env var is required");
@@ -42,6 +44,80 @@ function run(cmd, args, opts = {}) {
     p.on("error", (err) => resolve({ code: 1, stdout, stderr: String(err) }));
   });
 }
+
+function venvDir(botId) {
+  return path.join(botDir(botId), "venv");
+}
+
+
+
+
+function venvPython(botId) {
+  return path.join(venvDir(botId), "bin", "python");
+}
+
+async function ensureBotVenv(botId) {
+  const dir = botDir(botId);
+  const venv = venvDir(botId);
+  const python = venvPython(botId);
+
+  // If venv exists and python exists, reuse it.
+  const pythonExists = await fs
+    .stat(python)
+    .then(() => true)
+    .catch(() => false);
+  if (pythonExists) return { venv, python };
+
+  // Otherwise create venv.
+  await fs.mkdir(dir, { recursive: true });
+  const mk = await run(PYTHON_311, ["-m", "venv", "venv"], { cwd: dir });
+
+
+  if (mk.code !== 0) {
+    throw new Error(
+      `Failed to create venv for bot ${botId} using ${PYTHON_311}. stderr: ${mk.stderr.slice(-2000)}`
+    );
+  }
+
+  const pipExists = await fs
+    .stat(path.join(venv, "bin", "pip"))
+    .then(() => true)
+    .catch(() => false);
+  if (!pipExists) {
+    throw new Error(`Venv created for bot ${botId}, but pip not found at ${path.join(venv, "bin", "pip")}`);
+  }
+
+  return { venv, python };
+}
+
+async function pipInstallInBotVenv(botId) {
+  const dir = botDir(botId);
+  const reqPath = path.join(dir, "requirements.txt");
+  const reqExists = await fs
+    .stat(reqPath)
+    .then(() => true)
+    .catch(() => false);
+  if (!reqExists) return;
+
+  const { venv } = await ensureBotVenv(botId);
+  const pip = path.join(venv, "bin", "pip");
+
+  const pipRes = await run(pip, ["install", "--upgrade", "pip", "setuptools", "wheel"]);
+  if (pipRes.code !== 0) {
+    throw new Error(
+      `pip bootstrap failed for bot ${botId}. stderr: ${pipRes.stderr.slice(-2000)}`
+    );
+  }
+
+  const pipInstallRes = await run(pip, ["install", "-r", reqPath]);
+  if (pipInstallRes.code !== 0) {
+    throw new Error(
+      `pip install failed for bot ${botId}. stderr: ${pipInstallRes.stderr.slice(-2000)}`
+    );
+  }
+}
+
+
 
 const botDir = (botId) => path.join(BOTS_DIR, botId);
 const procName = (botId) => `bot-${botId}`;
@@ -112,27 +188,29 @@ app.post("/deploy", async (req, res) => {
     await fs.writeFile(path.join(dir, "config.json"), JSON.stringify(config, null, 2), "utf8");
   }
 
-  // Install Python deps if present
-  const reqPath = path.join(dir, "requirements.txt");
-  if (await fs.stat(reqPath).then(() => true).catch(() => false)) {
-    const pip = await run(PYTHON, ["-m", "pip", "install", "--break-system-packages", "-r", reqPath]);
-    if (pip.code !== 0) {
-      return res.status(500).json({
-        ok: false,
-        error: "pip install failed",
-        detail: pip.stderr.slice(-2000),
-      });
-    }
+  // Create venv + install deps (if requirements.txt exists)
+  try {
+    await ensureBotVenv(botId);
+    await pipInstallInBotVenv(botId);
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
+
+  const interpreter = venvPython(botId);
 
   // Register with pm2 (stopped state). `start` will launch it.
   const reg = await run("pm2", [
-    "start", "main.py",
-    "--name", procName(botId),
-    "--interpreter", PYTHON,
-    "--cwd", dir,
+    "start",
+    "main.py",
+    "--name",
+    procName(botId),
+    "--interpreter",
+    interpreter,
+    "--cwd",
+    dir,
     "--no-autorestart",
   ]);
+
   if (reg.code !== 0) {
     return res.status(500).json({ ok: false, error: "pm2 register failed", detail: reg.stderr });
   }
@@ -151,15 +229,33 @@ app.post("/start", async (req, res) => {
     const dir = botDir(botId);
     const exists = await fs.stat(dir).then(() => true).catch(() => false);
     if (!exists) return res.status(404).json({ ok: false, error: "Bot not deployed" });
+    // Ensure venv exists for this bot (safe migration)
+    try {
+      await ensureBotVenv(botId);
+      await pipInstallInBotVenv(botId);
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+
+    const interpreter = venvPython(botId);
+
     const reg = await run("pm2", [
-      "start", "main.py",
-      "--name", procName(botId),
-      "--interpreter", PYTHON,
-      "--cwd", dir,
+      "start",
+      "main.py",
+      "--name",
+      procName(botId),
+      "--interpreter",
+      interpreter,
+      "--cwd",
+      dir,
     ]);
+
     if (reg.code !== 0) return res.status(500).json({ ok: false, error: reg.stderr });
   } else {
-    const r = await run("pm2", ["start", procName(botId)]);
+    // Ensure PM2 uses bot's venv interpreter even for already-registered processes
+    const interpreter = venvPython(botId);
+    const r = await run("pm2", ["restart", procName(botId), "--interpreter", interpreter]);
+
     if (r.code !== 0) return res.status(500).json({ ok: false, error: r.stderr });
   }
   await run("pm2", ["save"]);
