@@ -46,4 +46,5 @@ uritemplate==4.1.1
 urllib3==2.2.3
 yarl==1.17.1
 youtube-dl==2021.12.17
-yt-dlp==2024.12.23
+yt-dlp==2026.6.9
+yt-dlp-ejs
