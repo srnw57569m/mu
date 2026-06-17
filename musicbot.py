@@ -1365,11 +1365,12 @@ Admin(s) only:
 
                 print(f"Playing: {song_title}")
 
-                if not isinstance(song_file_path, str) or not song_file_path or not os.path.exists(song_file_path):
-                    await self.highrise.chat("There was a problem with the song. Skipping to the next one.")
+                if not isinstance(song_file_path, str) or not song_file_path or not os.path.exists(song_file_path) or os.path.getsize(song_file_path) <= 0:
+                    await self.highrise.chat("There was a problem downloading the song. Skipping to the next one.")
                     self.currently_playing = False
                     self.currently_playing_title = None
                     continue
+
 
                 # Stream the song
                 await self.stream_to_radioking(song_file_path)
@@ -1760,12 +1761,16 @@ Admin(s) only:
         """Search YouTube using yt_dlp, validate, and return the title, duration, and file path (without downloading)."""
         ydl_opts = {
 
-            'format': 'bestaudio[ext=m4a]/bestaudio/best',
+            'format': 'bestaudio/best',
             'default_search': 'ytsearch',
             'quiet': True,
             'noplaylist': True,
 
             'cookiefile': '/root/cookies.txt',
+            'remote_components': 'ejs:github',
+
+            'force_ipv4': True,
+            'source_address': '0.0.0.0',
 
             'js_runtimes': {
                 'deno': {
@@ -1778,14 +1783,14 @@ Admin(s) only:
 
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['web_safari']
+                    'player_client': ['tv', 'web']
                 }
             },
 
             'outtmpl': 'downloads/%(id)s.%(ext)s',
 
             'ffmpeg_location': '/usr/bin/ffmpeg',
-        }    
+        }  
         try:
             # Workaround A: Clean NODE IPC env right before yt-dlp spawns deno/ejs.
             self._debug_node_ipc_env('before cleanup')
@@ -1836,35 +1841,36 @@ Admin(s) only:
             return None
         
     async def download_youtube_audio(self, song_request):
-        """Downloads audio from YouTube and returns the file path, title, and duration."""
+        """Downloads audio from YouTube and returns the local file path."""
         try:
-            # Workaround A: Clean NODE IPC env right before yt-dlp spawns deno/ejs.
-            self._debug_node_ipc_env('before cleanup')
-            self._cleanup_node_ipc_env()
-            self._debug_node_ipc_env('after cleanup')
-
+            # Keep the downloader options close to your working version.
+            # Goal: avoid postprocessing/extraction issues that can result in an empty output file.
 
             ydl_opts = {
-                'format': 'bestaudio[ext=m4a]/bestaudio/best',
+                'format': 'bestaudio/best',
                 'outtmpl': 'downloads/%(id)s.%(ext)s',
                 'default_search': 'ytsearch',
                 'quiet': True,
                 'noplaylist': True,
 
                 'cookiefile': '/root/cookies.txt',
+                'remote_components': 'ejs:github',
+
+                'force_ipv4': True,
+                'source_address': '0.0.0.0',
 
                 'js_runtimes': {
                     'deno': {
                         'path': '/root/.deno/bin/deno',
                         'args': [
                             '--no-lock',
-                       ]
+                        ]
                     }
                 },
 
                 'extractor_args': {
                     'youtube': {
-                        'player_client': ['web_safari']
+                        'player_client': ['tv', 'web']
                     }
                 },
 
@@ -1873,24 +1879,53 @@ Admin(s) only:
                 },
 
                 'ffmpeg_location': '/usr/bin/ffmpeg',
+                'nocheckcertificate': True,
             }
+
+            # Optional cookies (only if present)
+            cookies_path = '/root/cookies.txt'
+            if os.path.exists(cookies_path):
+                ydl_opts['cookiefile'] = cookies_path
+
+            # If you need deno/ejs runtime in your environment, you can keep it,
+            # but avoid extra postprocessors that can break downloads.
+            # (Leaving these out by default to match the working minimal approach.)
+            # ydl_opts['js_runtimes'] = ...
 
             with youtube_dl.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(song_request, download=True)
+                if not info:
+                    return None
                 if 'entries' in info:
                     info = info['entries'][0]
 
-                video_id = info['id']
-                title = info['title']
-                duration = info['duration']  # Duration in seconds
-                file_extension = info['ext']
+                video_id = info.get('id')
+                file_extension = info.get('ext')
+
+                if not video_id or not file_extension:
+                    return None
+
                 file_path = f"downloads/{video_id}.{file_extension}"
 
-                print(f"Downloaded: {file_path} with title: {title}, duration: {duration} seconds")
+                # Validate: exists + non-empty
+                if not os.path.exists(file_path) or os.path.getsize(file_path) <= 0:
+                    # Fallback: attempt to get actual downloaded filepath from yt-dlp
+                    requested_downloads = info.get('requested_downloads')
+                    if requested_downloads and isinstance(requested_downloads, list) and requested_downloads:
+                        candidate = requested_downloads[0].get('filepath')
+                        if candidate and os.path.exists(candidate) and os.path.getsize(candidate) > 0:
+                            file_path = candidate
+
+                if not os.path.exists(file_path) or os.path.getsize(file_path) <= 0:
+                    print(f"ERROR: downloaded file missing/empty: {file_path}")
+                    return None
+
                 return file_path
         except Exception as e:
             print(f"Error downloading the song: {e}")
-            return None, None, None
+            return None
+
+
         
     def load_stats(self):
         """Loads stats from a JSON file or initializes an empty dictionary."""
@@ -1957,13 +1992,17 @@ Admin(s) only:
     async def add_song_to_playlist(self, conversation_id: str, playlist_name: str, song_query: str, username: str):
         try:
             ydl_opts = {
-                'format': 'bestaudio[ext=m4a]/bestaudio/best',
+                'format': 'bestaudio/best',
                 'noplaylist': True,
                 'extractaudio': True,
                 'audioquality': 1,
                 'quiet': True,
 
                 'cookiefile': '/root/cookies.txt',
+                'remote_components': 'ejs:github',
+
+                'force_ipv4': True,
+                'source_address': '0.0.0.0',
 
                 'js_runtimes': {
                     'deno': {
@@ -1976,7 +2015,7 @@ Admin(s) only:
 
                 'extractor_args': {
                     'youtube': {
-                        'player_client': ['web_safari']
+                        'player_client': ['tv', 'web']
                     }
                 },
 
@@ -2127,31 +2166,3 @@ Admin(s) only:
         }
         with open(self.log_file, 'w') as f:
             json.dump(data, f, indent=4)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
