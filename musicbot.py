@@ -1732,20 +1732,69 @@ Admin(s) only:
             print(f"Error fetching user details: {str(e)}")
             return None
 
+    def _debug_node_ipc_env(self, prefix: str) -> None:
+        # Temporary debug logging to verify environment cleanup under PM2.
+        keys = [
+            'NODE_CHANNEL_FD',
+            'NODE_UNIQUE_ID',
+            'PM2_HOME',
+            'PM2_CLUSTER_ADDR',
+            'PM2_PID',
+            'PM2_PUBLIC_KEY',
+            'PM2_RUNTIME_DIR',
+            'PM2_GID',
+        ]
+        present = {k: os.environ.get(k) for k in keys}
+        print(f"[yt-dlp-ejs debug] {prefix} NODE/PM2 env: {present}")
+
+    def _cleanup_node_ipc_env(self) -> None:
+        # Workaround A: yt-dlp-ejs (deno provider) may rely on NODE_CHANNEL_FD IPC setup.
+        # Under PM2 this can point to a non-pipe fd, causing:
+        # "Failed to open IPC channel from NODE_CHANNEL_FD".
+        # Unset/unexport common NODE IPC env vars right before running yt-dlp.
+        for k in ['NODE_CHANNEL_FD', 'NODE_UNIQUE_ID', 'NODE_OPTIONS']:
+            if k in os.environ:
+                os.environ.pop(k, None)
+
     async def search_youtube(self, query, user):
         """Search YouTube using yt_dlp, validate, and return the title, duration, and file path (without downloading)."""
         ydl_opts = {
-            'format': 'bestaudio/best',
-            'default_search': 'ytsearch',  # Use ytsearch directly to get top result
-            'extractor_args': {'youtube': {'skip': ['dash', 'hls']}},  # Skip DASH/HLS formats
+
+            'format': 'bestaudio[ext=m4a]/bestaudio/best',
+            'default_search': 'ytsearch',
             'quiet': True,
             'noplaylist': True,
-            'outtmpl': 'downloads/%(id)s.%(ext)s',  # Placeholder for the file path (not actually downloaded)
-        }
 
+            'cookiefile': '/root/cookies.txt',
+
+            'js_runtimes': {
+                'deno': {
+                    'path': '/root/.deno/bin/deno',
+                    'args': [
+                        '--no-lock',
+                    ]
+                }
+            },
+
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web_safari']
+                }
+            },
+
+            'outtmpl': 'downloads/%(id)s.%(ext)s',
+
+            'ffmpeg_location': '/usr/bin/ffmpeg',
+        }    
         try:
+            # Workaround A: Clean NODE IPC env right before yt-dlp spawns deno/ejs.
+            self._debug_node_ipc_env('before cleanup')
+            self._cleanup_node_ipc_env()
+            self._debug_node_ipc_env('after cleanup')
+
             # Perform the search and fetch video info without downloading
             info = await asyncio.to_thread(self._fetch_video_details, query, ydl_opts)
+
 
             title = info.get('title')
             duration = info.get('duration')  # Duration in seconds
@@ -1789,16 +1838,41 @@ Admin(s) only:
     async def download_youtube_audio(self, song_request):
         """Downloads audio from YouTube and returns the file path, title, and duration."""
         try:
+            # Workaround A: Clean NODE IPC env right before yt-dlp spawns deno/ejs.
+            self._debug_node_ipc_env('before cleanup')
+            self._cleanup_node_ipc_env()
+            self._debug_node_ipc_env('after cleanup')
+
 
             ydl_opts = {
-                'format': 'bestaudio/best',
+                'format': 'bestaudio[ext=m4a]/bestaudio/best',
                 'outtmpl': 'downloads/%(id)s.%(ext)s',
                 'default_search': 'ytsearch',
                 'quiet': True,
                 'noplaylist': True,
-                'ffmpeg_options': {
-                    'y': True,  # Automatically overwrite any existing file
+
+                'cookiefile': '/root/cookies.txt',
+
+                'js_runtimes': {
+                    'deno': {
+                        'path': '/root/.deno/bin/deno',
+                        'args': [
+                            '--no-lock',
+                       ]
+                    }
                 },
+
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['web_safari']
+                    }
+                },
+
+                'ffmpeg_options': {
+                    'y': True,
+                },
+
+                'ffmpeg_location': '/usr/bin/ffmpeg',
             }
 
             with youtube_dl.YoutubeDL(ydl_opts) as ydl:
@@ -1883,11 +1957,30 @@ Admin(s) only:
     async def add_song_to_playlist(self, conversation_id: str, playlist_name: str, song_query: str, username: str):
         try:
             ydl_opts = {
-                'format': 'bestaudio/best',  
-                'noplaylist': True,           
-                'extractaudio': True,         
-                'audioquality': 1,            
-                'quiet': True,                
+                'format': 'bestaudio[ext=m4a]/bestaudio/best',
+                'noplaylist': True,
+                'extractaudio': True,
+                'audioquality': 1,
+                'quiet': True,
+
+                'cookiefile': '/root/cookies.txt',
+
+                'js_runtimes': {
+                    'deno': {
+                        'path': '/root/.deno/bin/deno',
+                        'args': [
+                            '--no-lock',
+                        ]
+                    }
+                },
+
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['web_safari']
+                    }
+                },
+
+                'ffmpeg_location': '/usr/bin/ffmpeg',
             }
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
