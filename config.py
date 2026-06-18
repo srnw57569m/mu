@@ -40,10 +40,7 @@ def load_config(*, path: str = CONFIG_PATH, require: bool = True) -> Dict[str, A
         required_paths = [
             ["bot", "token"],
             ["bot", "room_id"],
-            ["radio"],
-            ["commands"],
-            ["messages"],
-            ["branding"],
+            ["radio"]
         ]
         for p in required_paths:
             if _deep_get(cfg, p, default=None) is None:
