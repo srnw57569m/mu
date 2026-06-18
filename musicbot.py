@@ -92,7 +92,14 @@ class MyBot(BaseBot):
         self.user_data = {}
         self.file_path = "user_data.json"  # File path for user data
         self.load_user_data()
-
+# --- AutoPlay / Idle Music Variables ---
+        self.idle_keywords = [
+            "relaxing piano instrumental music no copyright 15-20mins",
+            "chill acoustic guitar background music 15-20mins",
+            "soft lofi hip hop beats for studying 15-20mins",
+            "ambient calm cinematic background music 15-20mins",
+        ]
+        self.idle_task = None
         # keep config in sync with runtime state
 
     def _load_config_runtime(self) -> None:
@@ -212,6 +219,58 @@ class MyBot(BaseBot):
                 f"Thank you for tipping {tip_amount}! Your balance has been updated."
             )
 
+    async def idle_music_monitor(self):
+        """Monitors the queue and plays random idle music if empty."""
+        while True:
+            await asyncio.sleep(10)
+            
+            # التأكد من أن البوت لا يقوم بتحميل شيء حالياً وأن الطابور فارغ
+            if self.is_loading or len(self.song_queue) > 0 or self.currently_playing:
+                continue
+            
+            try:
+                keyword = random.choice(self.idle_keywords)
+                print(f"[AutoPlay] Searching for: {keyword}")
+                
+                class DummyUser:
+                    username = "AutoPlay"
+                    id = "auto_play_id"
+                
+                # البحث عن الأغنية
+                title, duration, file_path, info = await self.search_youtube(keyword, DummyUser())
+
+                # التحقق من وجود بيانات
+                if title and duration and file_path:
+                    # Limit duration range for AutoPlay (piano/guitar/etc)
+                    # Goal: choose a track around this range, not longer than max.
+                    max_seconds = 25 * 60  # 20 minutes max
+                    min_seconds = 4 * 60  # 10 minutes min
+
+                    # If youtube returns duration outside our desired range, pick another idle keyword cycle.
+                    # (This still "skips" the current candidate, but the selection range is controlled.)
+                    if duration < min_seconds:
+                        print(f"[AutoPlay] Skipping too-short track ({duration}s): {title}")
+                        continue
+                    if duration > max_seconds:
+                        print(f"[AutoPlay] Skipping too-long track ({duration}s): {title}")
+                        continue
+
+                    print(f"[AutoPlay] Queuing: {title} ({duration}s)")
+
+                    # الإضافة مباشرة بدون استخدام أي متغير اسمه song
+                    await self.add_to_queue(
+                        "AutoPlay",
+                        title,
+                        duration,
+                        file_path,
+                        False
+                    )
+                else:
+                    print(f"[AutoPlay] Failed to fetch info for: {keyword}")
+                    
+            except Exception as e:
+                print(f"[AutoPlay] Error during autoplay cycle: {e}")
+
     async def on_start(self, session_metadata):
         print("nex is Armed and Ready.")
         self.is_loading = True
@@ -259,7 +318,11 @@ class MyBot(BaseBot):
 
         print("Creating a new playback loop.")
         self.play_task = asyncio.create_task(self.playback_loop())
-
+# Start the AutoPlay monitor
+        if self.idle_task and not self.idle_task.done():
+            self.idle_task.cancel()
+        self.idle_task = asyncio.create_task(self.idle_music_monitor())
+        # --------------------------------------------------
         # If there are songs in the queue, trigger the playback loop
         if self.song_queue:
             print("Songs found in queue. Triggering playback loop...")
@@ -659,6 +722,13 @@ class MyBot(BaseBot):
                     return
                 
             await self.add_to_queue(user.username, title, duration, file_path,self.ctoggle)
+# --- Interrupt AutoPlay if it's currently running ---
+            if self.currently_playing and self.current_song:
+                current_user = self.current_song.get("owner") or ""
+                if current_user == "AutoPlay":
+                    print("[AutoPlay] Interrupting idle music for real user request.")
+                    self.skip_event.set()
+
         if message.startswith('/play '):
 
             content = message[6:].strip()
@@ -709,6 +779,13 @@ class MyBot(BaseBot):
                     return
                 
             await self.add_to_queue(user.username, title, duration, file_path,self.ctoggle)
+# --- Interrupt AutoPlay if it's currently running ---
+            if self.currently_playing and self.current_song:
+                current_user = self.current_song.get("owner") or ""
+                if current_user == "AutoPlay":
+                    print("[AutoPlay] Interrupting idle music for real user request.")
+                    self.skip_event.set()
+
 
         if message.startswith('/skip') and user.username in self.admins:
             await self.skip_song(user)  # Pass user.username to the skip_song method
@@ -1174,6 +1251,15 @@ Admin(s) only:
 
     async def add_to_queue(self, owner, title, duration, file_path, ctoggle_state):
 
+        # Build song payload once (used by both append/insert paths)
+        song = {
+            'title': title,
+            'file_path': file_path,
+            'owner': owner,
+            'duration': duration,
+            'ctoggle_enabled': ctoggle_state,
+        }
+
         # Check if the user has already queued 3 songs
         user_song_count = 0
 
@@ -1192,15 +1278,14 @@ Admin(s) only:
             return
     
         if file_path and title and duration:
-
-            # If not in the queue, add the song
-            self.song_queue.append({
-                'title': title,
-                'file_path': file_path,
-                'owner': owner,
-                'duration': duration,
-                'ctoggle_enabled': ctoggle_state 
-            })
+            # Insert at the front if autoplay is currently playing, otherwise append.
+            if self.currently_playing and self.current_song and self.current_song.get("owner") == "AutoPlay":
+                print(f"[AutoPlay] مقاطعة الأوتو بلاي من أجل المستخدم: {owner}")
+                self.song_queue.insert(0, song)  # وضع الطلب الجديد في مقدمة الطابور
+                self.skip_event.set()            # إرسال إشارة إيقاف الأغنية الحالية (AutoPlay)
+            else:
+                self.song_queue.append(song)     # إضافة عادية في نهاية الطابور
+                self.play_event.set()
 
             # Save the queue after adding a song
             self.save_queue()
@@ -1331,12 +1416,9 @@ Admin(s) only:
             await self.play_event.wait()
 
             while self.song_queue:
+                # 1. فحص مبكر قبل ما تبدأ أي أغنية جديدة
                 if self.skip_event.is_set():
                     self.skip_event.clear()
-                    # Skip the current song and move on to the next song
-                    print("Song skipped due to skip_event being set")
-                    self.currently_playing = False
-                    self.currently_playing_title = None
                     continue
 
                 if not self.song_queue:
@@ -1356,7 +1438,7 @@ Admin(s) only:
                 duration = next_song.get('duration', 0)
                 formatted_duration = f"{int(duration // 60)}:{int(duration % 60):02d}"
 
-                # Convert and stream the song
+                # تنزيل الأغنية
                 song_file_path = await self.download_youtube_audio(song_title)
 
                 await self.highrise.chat(
@@ -1368,25 +1450,26 @@ Admin(s) only:
                 if not isinstance(song_file_path, str) or not song_file_path or not os.path.exists(song_file_path) or os.path.getsize(song_file_path) <= 0:
                     await self.highrise.chat("There was a problem downloading the song. Skipping to the next one.")
                     self.currently_playing = False
-                    self.currently_playing_title = None
+                    self.current_song = None
                     continue
 
-
-                # Stream the song
+                # 2. تشغيل الأغنية (التعديل هنا)
+                # بمجرد ما دالة stream_to_radioking تخلص (سواء طبيعي أو بسبب terminate)
                 await self.stream_to_radioking(song_file_path)
 
-                if self.skip_event.is_set():
-                    self.skip_event.clear()
-                    break  # Skip the current song and move on to the next song
-
-                # Clean up files after streaming
+                # 3. تنظيف بعد الأغنية وفحص التخطي
                 if os.path.exists(song_file_path):
                     os.remove(song_file_path)
-
+                
+                # فحص هل تم طلب تخطي أثناء التشغيل؟
+                if self.skip_event.is_set():
+                    self.skip_event.clear()
+                    print("تم رصد طلب تخطي، الانتقال للأغنية التالية...")
+                
                 self.currently_playing = False
                 self.current_song = None
 
-                await asyncio.sleep(10)
+                await asyncio.sleep(2) # تقليل وقت الانتظار عشان البوت يستجيب أسرع
 
             if not self.song_queue:
                 self.play_event.clear()
@@ -1412,7 +1495,19 @@ Admin(s) only:
             await asyncio.get_event_loop().run_in_executor(None, future.result)
 
     def _run_ffmpeg(self, song_file_path, icecast_url):
-
+        # --- بداية تعديل مراقب الإيقاف ---
+        def watch_skip():
+            while True:
+                # لو اليوزر طلب skip أو الأوتو بلاي اتقاطع
+                if self.skip_event.is_set():
+                    if hasattr(self, 'ffmpeg_process') and self.ffmpeg_process:
+                        self.ffmpeg_process.terminate()
+                        print("[System] تم إيقاف الـ FFmpeg بسبب طلب تخطي.")
+                    break
+                time.sleep(0.5) # مراقبة كل نصف ثانية
+        
+        threading.Thread(target=watch_skip, daemon=True).start()
+        # --- نهاية التعديل ---
 
         # Analyze the volume first
         mean_volume = self.analyze_volume(song_file_path)
@@ -1434,10 +1529,10 @@ Admin(s) only:
             '-i', song_file_path,  # Input audio file
             '-f', 'mp3',       # Specify output format as MP3
             '-acodec', 'libmp3lame',  # Use the libmp3lame codec for MP3 encoding
-            '-b:a', '256k',     # Set bitrate to 128kbps (less CPU intensive, lower quality)
+            '-b:a', '256k',     # Set bitrate to 256kbps
             '-ar', '44100',     # Set sample rate to 44100Hz
             '-ac', '2',         # Stereo channels
-            '-qscale:a', '8',   # Adjust quality scale for a balance between speed and quality (lower = better quality)
+            '-qscale:a', '8',   # Adjust quality scale
             encoded_mp3_path    # Output MP3 file
         ]
 
@@ -1447,7 +1542,7 @@ Admin(s) only:
             encode_command.insert(5, 'asetrate=44100*0.85,aresample=44100,atempo=1.176,equalizer=f=1000:t=q:w=1:g=5,equalizer=f=5000:t=q:w=1:g=10')
 
         # Apply nightcore effect if active
-        if self.nightcore:  # `elif` ensures only one effect is applied
+        if self.nightcore:
             encode_command.insert(4, '-filter_complex')
             encode_command.insert(5, 'asetrate=48000*1.15,aresample=48000,atempo=1.15,dynaudnorm')
 
@@ -1456,93 +1551,54 @@ Admin(s) only:
             encode_command.extend(['-af', volume_adjustment])
 
         def log_ffmpeg_progress(ffmpeg_process):
-
-            last_logged_time = -1  # Initialize last logged time to prevent duplicate logs
-
+            last_logged_time = -1
             while True:
                 line = ffmpeg_process.stderr.readline().strip()
                 if not line:
-                    break  # Exit the loop if no more data is available
-
-                # Match the time information from FFmpeg output
+                    break
                 match = re.search(r"time=(\d{2}):(\d{2}):(\d{2})\.(\d+)", line)
                 if match:
                     hours, minutes, seconds, _ = map(int, match.groups())
                     current_time = hours * 3600 + minutes * 60 + seconds
-
-                    # Start logging from the beginning without any delay
                     if current_time != last_logged_time:
-                        self.current_time = current_time  # Update the elapsed time
+                        self.current_time = current_time
                         print(f"Streaming: {self.current_time + 1} seconds elapsed")
                         last_logged_time = current_time
 
         try:
-            
             # Step 1: Encode the song to MP3
             encode_process = subprocess.Popen(
                 encode_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
             )
-
-            # Start a thread to process FFmpeg stderr for encoding progress
             print("ENCODING STARTED")
             threading.Thread(target=log_ffmpeg_progress, args=(encode_process,), daemon=True).start()
-
-            # Wait for encoding to complete
             encode_process.wait()
             print("ENCODING DONE : ✅")
 
-            if encode_process.returncode != 0:
-                print(f"Retrying encoding process.")
-                threading.Thread(target=log_ffmpeg_progress, args=(encode_process,), daemon=True).start()
-                encode_process.wait()
-                print("ENCODING DONE : ✅")
-
             # Step 2: Stream the encoded MP3 file to Icecast
             stream_command = [
-                'ffmpeg', 
-                '-y',              # Overwrite output file without asking
-                '-re',             # Read input at native frame rate to avoid overwhelming the system
-                '-i', encoded_mp3_path,  # Input encoded MP3 file
-                '-f', 'mp3',       # Specify output format as MP3
-                '-acodec', 'copy',  # Copy the MP3 codec (no re-encoding)
-                '-ab', '192k',     # Set bitrate to 192kbps
-                '-ar', '44100',    # Set sample rate to 44100Hz
-                '-ac', '2',        # Stereo channels
-                '-reconnect', '1', # Reconnect in case of network issues
-                '-reconnect_streamed', '1',  # Attempt reconnect for streamed connections
-                '-reconnect_delay_max', '10', # Max delay for reconnections
-                '-timeout', '3000000',  # Timeout value for connections
-                '-flvflags', 'no_duration_filesize',  # Avoid incorrect duration reporting
-                '-max_muxing_queue_size', '128',  # Avoid muxing issues
-                icecast_url        # Icecast server URL
+                'ffmpeg', '-y', '-re', '-i', encoded_mp3_path,
+                '-f', 'mp3', '-acodec', 'copy', '-ab', '192k',
+                '-ar', '44100', '-ac', '2', '-reconnect', '1',
+                '-reconnect_streamed', '1', '-reconnect_delay_max', '10',
+                '-timeout', '3000000', '-flvflags', 'no_duration_filesize',
+                '-max_muxing_queue_size', '128', icecast_url
             ]
 
-            # Start the FFmpeg process
             print("STREAMING STARTED")
             self.ffmpeg_process = subprocess.Popen(
                 stream_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
             )
 
-            # Log streaming progress (same method can be used for streaming)
             threading.Thread(target=log_ffmpeg_progress, args=(self.ffmpeg_process,), daemon=True).start()
-
-            # Wait for the stream to complete
             self.ffmpeg_process.wait()
             print("STREAMING DONE : ✅")
 
-            if self.ffmpeg_process.returncode != 0:
-                print(f"FFmpeg streaming error occurred with return code {self.ffmpeg_process.returncode}.")
-                # Clean up the temporary MP3 file
-                if os.path.exists(encoded_mp3_path):
-                    os.remove(encoded_mp3_path)
-                return  # Exit the function gracefully without crashing the bot
-            
-            # Clean up the temporary encoded file
-            os.remove(encoded_mp3_path)
+            if os.path.exists(encoded_mp3_path):
+                os.remove(encoded_mp3_path)
 
         except Exception as e:
             print(f"FFMPEG LOG: {e}")
-            # Optionally remove the temporary MP3 file if an error occurs
             if os.path.exists(encoded_mp3_path):
                 os.remove(encoded_mp3_path)
 
